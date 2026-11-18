@@ -6,8 +6,9 @@ cd "$(dirname "$0")/.."
 export GEMS_VENDOR=intellifusion
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
+status=0
 for op in abs add sum; do
-  python - "$op" <<'PY'
+  python - "$op" <<'PY' || status=1
 import sys
 
 import pytest
@@ -41,3 +42,4 @@ print(f"{op}: target={target.backend}, completed Triton launches={len(launches)}
 raise SystemExit(code or (0 if launches else 1))
 PY
 done
+exit "$status"
