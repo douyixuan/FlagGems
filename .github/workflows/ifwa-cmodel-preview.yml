@@ -1,0 +1,101 @@
+name: IFWA CModel preview
+
+on:
+  push:
+    branches: [codex/ifwa38-op-preview]
+
+permissions:
+  contents: read
+
+jobs:
+  accuracy:
+    if: github.repository == 'douyixuan/FlagGems' && github.actor == 'douyixuan'
+    runs-on: flaggems-ifwa-pr1
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Run original abs, add, and GLU accuracy cases
+        shell: bash
+        run: |
+          set -eo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "FlagGems: $GITHUB_SHA"
+          cat /opt/ifwa/VERSION
+          python -m venv --system-site-packages "$RUNNER_TEMP/ifwa-venv"
+          source "$RUNNER_TEMP/ifwa-venv/bin/activate"
+          wheel=/wheels/triton-3.8.0+git91686494-cp313-cp313-linux_x86_64.whl
+          echo "c8c07596c1aa0995b88d252430b9ee1aa0c0502199538a875aa772c505ed3d71  $wheel" | sha256sum --check
+          python -m pip install --no-index --no-deps "$wheel" /opt/torch-ifwa/torch_ifwa-0.0.10-cp313-cp313-linux_x86_64.whl /deps/*.whl
+          source /opt/ifwa/cmodel-env.sh
+          export GEMS_VENDOR=intellifusion PYTHONPATH="$PWD/src"
+          export TRITON_CACHE_DIR="$RUNNER_TEMP/triton-cache"
+          export FLAGGEMS_CACHE_DIR="$RUNNER_TEMP/flaggems-cache"
+          export XDG_CACHE_HOME="$RUNNER_TEMP/cache"
+
+          status=0
+          for op in abs add glu; do
+            timeout 180 python - "$op" <<'PY' || status=1
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          import pytest
+          import torch
+          import torch_ifwa  # noqa: F401
+          import triton
+
+          import flag_gems
+          from flag_gems.utils import tl_extra_shim
+
+          cases = {
+              "abs": "test_abs[dtype0-shape0]",
+              "add": "test_add[dtype0--0.999-shape0]",
+              "glu": "test_glu[dtype0-shape0]",
+          }
+          op = sys.argv[1]
+          target = triton.runtime.driver.active.get_current_target()
+          print(f"Triton={triton.__version__} target={target} vendor={flag_gems.vendor_name}")
+          assert target.backend == "ifwa"
+          assert flag_gems.vendor_name == "intellifusion"
+          assert torch.empty(1, device=flag_gems.device).device.type == "ifwa"
+
+          launches = []
+          links = []
+
+          def record_launch(metadata):
+              launches.append(metadata)
+
+          def record_link(event, args):
+              if event == "subprocess.Popen" and Path(args[0]).name == "llvm-link":
+                  for arg in args[1]:
+                      path = Path(arg)
+                      if path.name.startswith("libdevice") and path.suffix == ".bc":
+                          links.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
+
+          if op == "glu":
+              print(f"GLU exp module: {tl_extra_shim.exp.__module__}")
+              sys.addaudithook(record_link)
+
+          class VerifyCase:
+              def pytest_collection_finish(self, session):
+                  assert len(session.items) == 1
+                  params = session.items[0].callspec.params
+                  print(f"{op}: {params}")
+                  assert params["dtype"] == torch.bfloat16
+                  assert tuple(params["shape"]) == (2, 19, 7)
+
+          triton.knobs.runtime.launch_exit_hook.add(record_launch)
+          result = pytest.main([
+              "-s", "--tb=short", "--quick", "--ref", "cpu",
+              f"tests/test_{op}.py::{cases[op]}",
+          ], plugins=[VerifyCase()])
+          print(f"{op}: pytest={result.value}, completed Triton launches={len(launches)}")
+          if op == "glu":
+              print(f"GLU llvm-link bitcode inputs (filename, SHA-256): {links}")
+          raise SystemExit(result or (0 if launches else 1))
+          PY
+          done
+          exit "$status"

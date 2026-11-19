@@ -557,7 +557,8 @@ class KernelGenerator:
                 f"out{i}_ptr, ({shape}), ({strides}), ({offsets}), ({tile_sizes}), order=({order}))"
             )
             code.writeline(
-                f"tl.store(out{i}_bptr, out{i}.to(out{i}_bptr.type.element_ty), boundary_check=({order}))"
+                f"tl.store(out{i}_bptr, out{i}.to(out{i}_bptr.dtype.element_ty), "
+                f"boundary_check=({order}))"
             )
 
     def gen_body_gsl_with_bptr(self, code):
