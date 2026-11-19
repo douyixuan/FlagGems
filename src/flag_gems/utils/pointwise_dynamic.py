@@ -478,8 +478,6 @@ class KernelGenerator:
 
     # nd tile 1d grid kernel with block pointer
     def gen_body_one_tile_per_cta_with_bptr(self, code):
-        import flag_gems
-
         ndim = self.ndim
         schema = self.fx
 
@@ -512,6 +510,8 @@ class KernelGenerator:
         code.writeline("# loads")
         for i in range(schema.num_input_tensors()):
             strides = _tuple_content(tuple(f"in{i}_stride{j}" for j in range(ndim)))
+            import flag_gems
+
             if flag_gems.vendor_name == "spacemit":
                 order = _tuple_content(tuple(f"{ndim - j - 1}" for j in range(ndim)))
             else:
@@ -547,11 +547,6 @@ class KernelGenerator:
         code.writeline(
             "# stores, note that store to block pointer does not automatically cast the value to the pointer's dtype"
         )
-        # Triton 3.8 block pointers have an aggregate type without element_ty.
-        # Use dtype.element_ty for the IFWA configuration that uses this implementation.
-        out_ptr_type_attr = (
-            "dtype" if flag_gems.vendor_name == "intellifusion" else "type"
-        )
         for i in range(schema.num_output_tensors()):
             strides = _tuple_content(tuple(f"out{i}_stride{j}" for j in range(ndim)))
             order = _tuple_content(
@@ -562,7 +557,7 @@ class KernelGenerator:
                 f"out{i}_ptr, ({shape}), ({strides}), ({offsets}), ({tile_sizes}), order=({order}))"
             )
             code.writeline(
-                f"tl.store(out{i}_bptr, out{i}.to(out{i}_bptr.{out_ptr_type_attr}.element_ty), "
+                f"tl.store(out{i}_bptr, out{i}.to(out{i}_bptr.dtype.element_ty), "
                 f"boundary_check=({order}))"
             )
 
