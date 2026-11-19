@@ -547,7 +547,8 @@ class KernelGenerator:
         code.writeline(
             "# stores, note that store to block pointer does not automatically cast the value to the pointer's dtype"
         )
-        # IFWA block pointers expose the base pointer's dtype on the aggregate value.
+        # Triton 3.8 block pointers have an aggregate type without element_ty.
+        # Use dtype.element_ty for the IFWA configuration that uses this implementation.
         out_ptr_type_attr = (
             "dtype" if flag_gems.vendor_name == "intellifusion" else "type"
         )
